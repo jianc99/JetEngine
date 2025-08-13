@@ -7,9 +7,9 @@ from multiprocessing.shared_memory import SharedMemory
 
 from jetengine.config import Config
 from jetengine.engine.sequence import Sequence, RunType, SequenceStatus
-from jetengine.models.qwen3 import Qwen3ForCausalLM
+# from jetengine.models.qwen3 import Qwen3ForCausalLM
 from jetengine.models.sdar import SDARForCausalLM
-from jetengine.models.qwen3_moe import Qwen3MoeForCausalLM
+# from jetengine.models.qwen3_moe import Qwen3MoeForCausalLM
 from jetengine.models.sdar_moe import SDARMoeForCausalLM
 from jetengine.utils.context import set_context, get_context, reset_context
 from jetengine.utils.loader import load_model

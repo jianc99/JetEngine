@@ -58,7 +58,7 @@ def main():
         )
         for prompt in prompts
     ]
-    outputs = llm.generate_streaming(prompts[0], sampling_params, max_active=256, profile=False, profile_dir="/fs-computility/mabasic/bianyihan/llm_engine_profile")
+    outputs = llm.generate_streaming([prompts[0]], sampling_params, max_active=256, profile=False, profile_dir="/fs-computility/mabasic/bianyihan/llm_engine_profile")
     outputs = llm.generate_streaming(prompts, sampling_params, max_active=256, profile=False, profile_dir="/fs-computility/mabasic/bianyihan/llm_engine_profile")
 
     for prompt, output in zip(prompts, outputs):
