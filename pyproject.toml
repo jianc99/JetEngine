@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jetengine"
+version = "0.1.0"
+authors = [{ name = "Yihan Bian" }]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+description = "a lightweight inference engine tailored for SDAR model (block diffusion) built from nanovllm"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "torch>=2.4.0",
+    "triton>=3.0.0",
+    "transformers>=4.51.0",
+    "liger-kernel",
+    "flashinfer-python",
+    "xxhash",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jetengine*"]
