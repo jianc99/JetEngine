@@ -2,7 +2,6 @@ import math
 import torch
 import triton
 import triton.language as tl
-from .block_prefill_attention import sparse_attn_varlen as sparse_attn_varlen_v1
 
 @triton.autotune(
     configs=[

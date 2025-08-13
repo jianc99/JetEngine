@@ -7,7 +7,6 @@ def main():
     path = os.path.expanduser("/fs-computility/mabasic/bianyihan/models/SDAR-4B-Chat")
     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
     llm = LLM(path, enforce_eager=True, tensor_parallel_size=1, mask_token_id=151669, block_length=4)
-    # data = load_dataset("parquet", data_files={'train': '/fs-computility/mabasic/bianyihan/data/gsm8k/train.parquet'})
     sampling_params = SamplingParams(temperature=1.0, topk=0, topp=1.0, max_tokens=2048, remasking_strategy="low_confidence_dynamic", block_length=4, denoising_steps=4, dynamic_threshold=0.9)
     prompts = [
         "Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$\nPlease reason step by step, and put your final answer within \\boxed{}.\n",
@@ -25,29 +24,6 @@ def main():
         "The solution to $-4 < 2(x - 1) < 8$ is expressed in the form $a < x < b$. Find the value of $a + b$.\nPlease reason step by step, and put your final answer within \\boxed{}.\n",
         "Bill walks $\\frac{1}{2}$ mile south, then $\\frac{3}{4}$ mile east, and finally $\\frac{1}{2}$ mile south. How many miles is he, in a direct line, from his starting point?  Express your answer as a decimal to the nearest hundredth.\nPlease reason step by step, and put your final answer within \\boxed{}.\n"
     ]
-    prompts_answer_2_cot = [
-        "Let $a$ be a positive real number such that all the roots of\n\\[x^3 + ax^2 + ax + 1 = 0\\]are real.  Find the smallest possible value of $a.$\n The proposed answer is \\boxed{5}. Please reason step by step to verify the answer.\n",
-    ]
-    # all_prompts = data['train']['prompt']
-    # for i in range(0, len(all_prompts), 256):
-    #     batch_prompts_raw = all_prompts[i:i+256]
-    #     prompts = [
-    #         tokenizer.apply_chat_template(
-    #             # [{"role": "user", "content": prompt}],
-    #             prompt,
-    #             tokenize=False,
-    #             add_generation_prompt=True,
-    #             enable_thinking=True
-    #         )
-    #         for prompt in batch_prompts_raw
-    #     ]
-    #     outputs = llm.generate(prompts, sampling_params)
-
-    #     for prompt, output in zip(prompts, outputs):
-    #         print("\n")
-    #         print(f"Prompt: {prompt!r}")
-    #         print(f"Completion: {output['text']!r}")
-    #     break
     prompts = [
         tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}],
@@ -58,8 +34,8 @@ def main():
         )
         for prompt in prompts
     ]
-    outputs = llm.generate_streaming([prompts[0]], sampling_params, max_active=256, profile=False, profile_dir="/fs-computility/mabasic/bianyihan/llm_engine_profile")
-    outputs = llm.generate_streaming(prompts, sampling_params, max_active=256, profile=False, profile_dir="/fs-computility/mabasic/bianyihan/llm_engine_profile")
+    outputs = llm.generate_streaming([prompts[0]], sampling_params, max_active=256)
+    outputs = llm.generate_streaming(prompts * 5, sampling_params, max_active=256)
 
     for prompt, output in zip(prompts, outputs):
         print("\n")
