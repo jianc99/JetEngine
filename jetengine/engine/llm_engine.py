@@ -39,6 +39,7 @@ class LLMEngine:
 
         self.config = config
         self.scheduler = Scheduler(config)
+        self.scheduler.consistent_sampling_params = False
         atexit.register(self.exit)
 
     def exit(self):
@@ -87,6 +88,7 @@ class LLMEngine:
             pbar = tqdm(total=len(prompts), desc="Generating", dynamic_ncols=True)
         if not isinstance(sampling_params, list):
             sampling_params = [sampling_params] * len(prompts)
+            self.scheduler.consistent_sampling_params = True
         for prompt, sp in zip(prompts, sampling_params):
             self.add_request(prompt, sp)
         outputs = {}
@@ -148,6 +150,7 @@ class LLMEngine:
         total = len(prompts)
         if not isinstance(sampling_params, list):
             sampling_params = [sampling_params] * total
+            self.scheduler.consistent_sampling_params = True
 
         if max_active is None:
             max_active = getattr(self.scheduler, "max_num_seqs", 32)

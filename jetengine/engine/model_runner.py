@@ -7,9 +7,7 @@ from multiprocessing.shared_memory import SharedMemory
 
 from jetengine.config import Config
 from jetengine.engine.sequence import Sequence, RunType, SequenceStatus
-# from jetengine.models.qwen3 import Qwen3ForCausalLM
 from jetengine.models.sdar import SDARForCausalLM
-# from jetengine.models.qwen3_moe import Qwen3MoeForCausalLM
 from jetengine.models.sdar_moe import SDARMoeForCausalLM
 from jetengine.utils.context import set_context, get_context, reset_context
 from jetengine.utils.loader import load_model
@@ -31,11 +29,7 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
-        if "moe" in hf_config.model_type and "qwen" in hf_config.model_type:
-            self.model = Qwen3MoeForCausalLM(hf_config)
-        elif "qwen" in hf_config.model_type:
-            self.model = Qwen3ForCausalLM(hf_config)
-        elif "sdar" in hf_config.model_type and "moe" in hf_config.model_type:
+        if "sdar" in hf_config.model_type and "moe" in hf_config.model_type:
             self.model = SDARMoeForCausalLM(hf_config)
         elif "sdar" in hf_config.model_type:
             self.model = SDARForCausalLM(hf_config)
@@ -46,7 +40,8 @@ class ModelRunner:
         self.warmup_model()
         self.allocate_kv_cache()
         # CUDA graph capture for block diffusion is complex and omitted for this example
-        self.enforce_eager = True
+        if not self.enforce_eager:
+            self.capture_cudagraph()
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
 
@@ -188,9 +183,8 @@ class ModelRunner:
         return input_ids, positions
 
     def prepare_denoise(self, seqs: list[Sequence]):
-        input_ids, positions, cu_seqlens_q, slot_mapping = [], [], [0], []
-        cu_seqlens_k = [0]
-        max_seqlen_q, max_seqlen_k = 0, 0
+        input_ids, positions = [], []
+        cached_lens = []
         
         for seq in seqs:
             # The query is the current intermediate block
@@ -203,40 +197,17 @@ class ModelRunner:
             input_ids.extend(q_tokens)
             # Positions are global
             positions.extend(range(k_len, k_len + q_len))
-
-            cu_seqlens_q.append(cu_seqlens_q[-1] + q_len)
-            cu_seqlens_k.append(cu_seqlens_k[-1] + k_len)
-            max_seqlen_q = max(max_seqlen_q, q_len)
-            max_seqlen_k = max(max_seqlen_k, k_len)
-
-            # Map the new KV entries for this block to free slots
-            # This logic is now handled by the scheduler before calling the runner
-            for i in range(q_len):
-                pos = k_len + i
-                block_idx = pos // self.block_size
-                block_offset = pos % self.block_size
-                slot = seq.block_table[block_idx] * self.block_size + block_offset
-                slot_mapping.append(slot)
-
-        # Determine if this is the last step for any sequence in the batch
-        is_last_step = [seq.status == SequenceStatus.SAVING for seq in seqs]
+            cached_lens.append(k_len)
 
         input_ids = torch.tensor(input_ids, dtype=torch.int64).cuda()
         positions = torch.tensor(positions, dtype=torch.int64).cuda()
-        cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32).cuda()
-        cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32).cuda()
-        slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32).cuda()
+        cached_lens = torch.tensor(cached_lens, dtype=torch.int32).cuda()
         block_tables = self.prepare_block_tables(seqs)
         
         set_context(
             run_type=RunType.DENOISE,
-            cu_seqlens_q=cu_seqlens_q, 
-            cu_seqlens_k=cu_seqlens_k, 
-            max_seqlen_q=max_seqlen_q, 
-            max_seqlen_k=max_seqlen_k, 
-            slot_mapping=slot_mapping, 
+            context_lens=cached_lens,
             block_tables=block_tables,
-            is_last_denoise_step=is_last_step, # <-- Pass the new flag
             block_length=self.config.block_length
         )
         
@@ -244,7 +215,6 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor):
-        # Simplified to always run eagerly for block diffusion
         return self.model.compute_logits(self.model(input_ids, positions))
 
     def run(self, seqs: list[Sequence], run_type: RunType) -> torch.Tensor:
@@ -263,24 +233,25 @@ class ModelRunner:
     def capture_cudagraph(self):
         config = self.config
         hf_config = config.hf_config
-        max_bs = min(self.config.max_num_seqs, 512)
+        max_bs = min(self.config.max_num_seqs, 256)
+        max_global_bs = max_bs * self.config.block_length
         max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
-        input_ids = torch.zeros(max_bs, dtype=torch.int64)
-        positions = torch.zeros(max_bs, dtype=torch.int64)
-        slot_mapping = torch.zeros(max_bs, dtype=torch.int32)
+        input_ids = torch.zeros(max_global_bs, dtype=torch.int64)
+        positions = torch.zeros(max_global_bs, dtype=torch.int64)
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
-        outputs = torch.zeros(max_bs, hf_config.hidden_size)
+        outputs = torch.zeros(max_global_bs, hf_config.hidden_size)
         self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
         self.graphs = {}
         self.graph_pool = None
 
         for bs in reversed(self.graph_bs):
             graph = torch.cuda.CUDAGraph()
-            set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs])
-            outputs[:bs] = self.model(input_ids[:bs], positions[:bs])    # warmup
+            set_context(run_type=RunType.DENOISE, context_lens=context_lens[:bs], block_tables=block_tables[:bs], block_length=self.config.block_length)
+            global_bs = bs * self.config.block_length
+            outputs[:global_bs] = self.model(input_ids[:global_bs], positions[:global_bs])    # warmup
             with torch.cuda.graph(graph, self.graph_pool):
-                outputs[:bs] = self.model(input_ids[:bs], positions[:bs])    # capture
+                outputs[:global_bs] = self.model(input_ids[:global_bs], positions[:global_bs])    # capture
             if self.graph_pool is None:
                 self.graph_pool = graph.pool()
             self.graphs[bs] = graph
@@ -290,7 +261,6 @@ class ModelRunner:
         self.graph_vars = dict(
             input_ids=input_ids,
             positions=positions,
-            slot_mapping=slot_mapping,
             context_lens=context_lens,
             block_tables=block_tables,
             outputs=outputs,

@@ -72,23 +72,26 @@ class Scheduler:
                 seq.status = SequenceStatus.DENOISING
         
         elif run_type == RunType.DENOISE:
-            # x0, probs = sample_with_temperature_topk_topp(
-            #     logits,
-            #     temperature=seq.temperature,
-            #     top_k=seq.top_k,
-            #     top_p=seq.top_p
-            # )
             start_idx = 0
+            if self.consistent_sampling_params:
+                if seqs[0].top_k > 0:
+                    probs = self.sample_pipe(logits, temperature=seqs[0].temperature, top_k=seqs[0].top_k, top_p=seqs[0].top_p) 
+                else:
+                    probs = self.sample_pipe_topk0(logits, temperature=seqs[0].temperature, top_p=seqs[0].top_p)
             for seq in seqs:
                 # Extract the part of the tensors relevant to this sequence
                 if seq.status == SequenceStatus.DENOISING:
                     block_len = seq.block_length
-                    if seq.top_k > 0:
-                        probs = self.sample_pipe(logits[start_idx : start_idx + block_len], temperature=seq.temperature, top_k=seq.top_k, top_p=seq.top_p)
+                    if not self.consistent_sampling_params:
+                        if seq.top_k > 0:
+                            probs = self.sample_pipe(logits[start_idx : start_idx + block_len], temperature=seq.temperature, top_k=seq.top_k, top_p=seq.top_p) 
+                        else:
+                            probs = self.sample_pipe_topk0(logits[start_idx : start_idx + block_len], temperature=seq.temperature, top_p=seq.top_p)
+                        seq_x0 = torch.multinomial(probs, num_samples=1).squeeze(-1) 
+                        seq_x0_p = torch.gather(probs, -1, seq_x0.unsqueeze(-1)).squeeze(-1)    
                     else:
-                        probs = self.sample_pipe_topk0(logits[start_idx : start_idx + block_len], temperature=seq.temperature, top_p=seq.top_p)
-                    seq_x0 = torch.multinomial(probs, num_samples=1).squeeze(-1) 
-                    seq_x0_p = torch.gather(probs, -1, seq_x0.unsqueeze(-1)).squeeze(-1)    
+                        seq_x0 = torch.multinomial(probs[start_idx : start_idx + block_len], num_samples=1).squeeze(-1) 
+                        seq_x0_p = torch.gather(probs[start_idx : start_idx + block_len], -1, seq_x0.unsqueeze(-1)).squeeze(-1)    
                     
                     current_block_tensor = torch.tensor(seq.intermediate_block_tokens, device=logits.device)
                     mask_index = (current_block_tensor == self.mask_token_id)

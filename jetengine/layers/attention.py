@@ -6,8 +6,9 @@ import triton.language as tl
 from jetengine.utils.context import get_context
 from jetengine.engine.sequence import RunType
 from jetengine.kernels.triton.attention import sparse_attn_varlen
-from jetengine.kernels.triton.attention import fused_kv_cache_attention
-
+# from jetengine.kernels.triton.attention import fused_kv_cache_attention
+# from jetengine.kernels.triton.attention import fused_kv_cache_attention_v5
+from flash_attn import flash_attn_with_kvcache
 
 
 @triton.jit
@@ -39,20 +40,6 @@ def store_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor,
     assert key.stride(1) == head_dim and value.stride(1) == head_dim
     assert k_cache.stride(1) == D and v_cache.stride(1) == D
     assert slot_mapping.numel() == N
-    store_kvcache_kernel[(N,)](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
-    
-def store_part_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, slot_mapping: torch.Tensor, cu_seqlens_q: torch.Tensor, is_last_denoise_step: torch.Tensor):
-    N, num_heads, head_dim = key.shape
-    D = num_heads * head_dim
-    assert key.stride(-1) == 1 and value.stride(-1) == 1
-    assert key.stride(1) == head_dim and value.stride(1) == head_dim
-    assert k_cache.stride(1) == D and v_cache.stride(1) == D
-    assert slot_mapping.numel() == N
-    store_mask = torch.repeat_interleave(is_last_denoise_step, cu_seqlens_q[1:] - cu_seqlens_q[:-1]).unsqueeze(1).unsqueeze(2)
-    key = store_mask * key
-    value = store_mask * value
-    # The store_kvcache_kernel expects the key and value to be masked already
-    # so we can just pass them directly
     store_kvcache_kernel[(N,)](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
 
 
@@ -96,23 +83,20 @@ class BlockAttention(Attention):
         should_store_whole = (context.run_type == RunType.PREFILL)
         if should_store_whole and k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
-
-        should_store_part = any(context.is_last_denoise_step)
-        if should_store_part and k_cache.numel() and v_cache.numel():
-            store_part_kvcache(k, v, k_cache, v_cache, context.slot_mapping, context.cu_seqlens_q, torch.tensor(context.is_last_denoise_step).int().to(k.device))
-        
+            
         if context.run_type == RunType.PREFILL:
-
             o = sparse_attn_varlen(q, k, v,
                                 cu_seqlens_q=context.cu_seqlens_q,
                                 cu_seqlens_k=context.cu_seqlens_k,
                                 staircase_size=context.block_length)
         else:
-            o = fused_kv_cache_attention(q, k, v, k_cache, v_cache, 
-                                        block_tables=context.block_tables,
-                                        cu_seqlens_q=context.cu_seqlens_q, 
-                                        cu_seqlens_k=context.cu_seqlens_k,
-                                        block_len=context.block_length)           
+            q = q.view(-1, context.block_length, self.num_heads, self.head_dim)
+            k = k.view(-1, context.block_length, self.num_kv_heads, self.head_dim)
+            v = v.view(-1, context.block_length, self.num_kv_heads, self.head_dim)
+            o = flash_attn_with_kvcache(q, k_cache=k_cache, v_cache=v_cache, k=k, v=v,
+                                        cache_seqlens=context.context_lens,
+                                        block_table=context.block_tables,
+                                        causal=False)  # Assuming non-causal for benchmark consistency     
         o = o.view(-1, self.num_heads * self.head_dim)
         return o
 

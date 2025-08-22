@@ -128,7 +128,7 @@ class SparseAttentionVarlenFunctionV2(torch.autograd.Function):
         assert k.shape[1] == v.shape[1] and k.shape[2] == v.shape[2]
         assert q.shape[2] == k.shape[2]
         assert q.shape[1] % k.shape[1] == 0
-        assert staircase_size in [1,2,4,8,16]
+        assert staircase_size in [1,2,4,8,16,32,64]
         log2_stairs = int(math.log2(staircase_size)) if staircase_size > 0 else 0
         total_tokens, n_heads, head_dim = q.shape
         _, n_kv_heads, _ = k.shape
