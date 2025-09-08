@@ -11,7 +11,8 @@ class SamplingParams:
     block_length: int = 4
     denoising_steps: int = 4
     dynamic_threshold: float = 0.9
+    eb_threshold: float = 0.35
     topk: int = 0
     topp: float = 1
-    remasking_strategy: Literal['sequential', 'low_confidence_static', 'low_confidence_dynamic'] = 'low_confidence_static'
+    remasking_strategy: Literal['sequential', 'low_confidence_static', 'low_confidence_dynamic', 'entropy_bounded'] = 'low_confidence_static'
     stop_words: list[int] | None = None

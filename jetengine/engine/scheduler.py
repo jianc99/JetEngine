@@ -118,6 +118,21 @@ class Scheduler:
                             _, top_indices = torch.topk(confidence, num_to_transfer)
                             transfer_index[top_indices] = True
                         num_to_transfer = transfer_index.sum().item() if transfer_index.sum().item() > 0 else num_to_transfer
+                    elif 'entropy_bounded' in seq.remasking_strategy:
+                        block_probs = probs[start_idx : start_idx + block_len]
+                        P = block_probs[mask_index]
+                        eps = 1e-12
+                        entropies = -(P.clamp_min(eps) * (P.clamp_min(eps)).log()).sum(dim=-1)
+                        ent_sorted, order = torch.sort(entropies, dim=0, descending=False)
+                        cumsum = torch.cumsum(ent_sorted, dim=0)
+                        k = torch.searchsorted(cumsum, torch.tensor(seq.eb_threshold, device=P.device), right=False).item()
+                        if k == 0:
+                            k = 1
+                        # print(k)
+                        selected_token_indices = mask_index.nonzero(as_tuple=True)[0][order[:k]]
+                        # print(selected_token_indices)
+                        transfer_index[selected_token_indices] = True
+                        num_to_transfer = k
 
                     # update
                     new_block_list = current_block_tensor.tolist()

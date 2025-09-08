@@ -57,6 +57,7 @@ class Sequence:
         self.denoising_steps = sampling_params.denoising_steps
         self.remasking_strategy = sampling_params.remasking_strategy
         self.dynamic_threshold = sampling_params.dynamic_threshold
+        self.eb_threshold = sampling_params.eb_threshold
         self.mask_token_id = mask_token_id
         self.num_transfer_tokens_per_step = self._get_num_transfer_tokens()
 
