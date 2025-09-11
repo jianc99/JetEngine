@@ -11,7 +11,7 @@ import triton.language as tl
         triton.Config({"BLOCK_M": 128, "BLOCK_N": 128}, num_stages=3, num_warps=8),
         triton.Config({"BLOCK_M": 32,  "BLOCK_N": 128}, num_stages=4, num_warps=4),
     ],
-    key=["BLOCK_DMODEL", "STAIRCASE_SIZE"],
+    key=["BLOCK_DMODEL", "LOG2_STAIRS"],
 )
 @triton.jit
 def _staircase_attn_fwd_kernel_varlen_v2(
@@ -26,30 +26,38 @@ def _staircase_attn_fwd_kernel_varlen_v2(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
-    STAIRCASE_SIZE: tl.constexpr,
     LOG2_STAIRS: tl.constexpr,
     NUM_HEADS_PER_KV_GROUP: tl.constexpr,
 ):
     seq_idx = tl.program_id(0)
     head_idx = tl.program_id(1)
     kv_head_idx = head_idx // NUM_HEADS_PER_KV_GROUP
+
     q_seq_start = tl.load(cu_seqlens_q + seq_idx).to(tl.int32)
-    q_seq_end   = tl.load(cu_seqlens_q + seq_idx + 1).to(tl.int32)
+    q_seq_end = tl.load(cu_seqlens_q + seq_idx + 1).to(tl.int32)
     k_seq_start = tl.load(cu_seqlens_k + seq_idx).to(tl.int32)
-    k_seq_end   = tl.load(cu_seqlens_k + seq_idx + 1).to(tl.int32)
+    k_seq_end = tl.load(cu_seqlens_k + seq_idx + 1).to(tl.int32)
     q_seq_len = q_seq_end - q_seq_start
     k_seq_len = k_seq_end - k_seq_start
+
     if q_seq_len == 0:
         return
+
     Q_head_ptr = Q + head_idx * stride_qh
     K_head_ptr = K + kv_head_idx * stride_kh
     V_head_ptr = V + kv_head_idx * stride_vh
     O_head_ptr = Out + head_idx * stride_oh
-    start_m = 0
-    while start_m < q_seq_len:
+
+    # ---------- outer tiles over M (queries) ----------
+    num_m_iters = (q_seq_len + BLOCK_M - 1) // BLOCK_M
+    for it_m in range(num_m_iters):  # -> scf.for (supported)
+        start_m = it_m * BLOCK_M
+
+        # running softmax state for this M-tile
         m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
         l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
         acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
         q_block_abs_start = q_seq_start + start_m
         Q_block_ptr = tl.make_block_ptr(
             base=Q_head_ptr,
@@ -60,18 +68,27 @@ def _staircase_attn_fwd_kernel_varlen_v2(
             order=(1, 0),
         )
         q = tl.load(Q_block_ptr, boundary_check=(0,))
-        q = (q * q_scale).to(q.type)
+        q = (q * q_scale).to(q.dtype)
+
+        # staircase window end bound for this M-tile
         q_block_rel_end = tl.minimum(start_m + BLOCK_M - 1, q_seq_len - 1)
         max_band = q_block_rel_end >> LOG2_STAIRS
         end_n = (max_band + 1) << LOG2_STAIRS
         end_n = tl.minimum(end_n, k_seq_len)
+
         offs_m = start_m + tl.arange(0, BLOCK_M)
         m_valid = offs_m < q_seq_len
         row_band = offs_m >> LOG2_STAIRS
-        col_limit_abs = (row_band + 1) << LOG2_STAIRS
-        col_limit_abs = col_limit_abs - 1
-        start_n = 0
-        while start_n < end_n:
+        col_limit_abs = ((row_band + 1) << LOG2_STAIRS) - \
+            1  # inclusive upper col bound
+
+        # ---------- inner tiles over N (keys/values) ----------
+        num_n_iters = (end_n + BLOCK_N - 1) // BLOCK_N
+        for it_n in range(num_n_iters):  # -> scf.for (supported)
+            start_n = it_n * BLOCK_N
+            # NOTE: We intentionally iterate up to ceil(end_n/BLOCK_N).
+            # Masking below ensures correctness when start_n >= end_n or tail overflow.
+
             k_block_abs_start = k_seq_start + start_n
             K_iter_ptr = tl.make_block_ptr(
                 base=K_head_ptr,
@@ -89,26 +106,36 @@ def _staircase_attn_fwd_kernel_varlen_v2(
                 block_shape=(BLOCK_N, BLOCK_DMODEL),
                 order=(1, 0),
             )
+
             k = tl.load(K_iter_ptr, boundary_check=(0,), cache_modifier=".cg")
             v = tl.load(V_iter_ptr, boundary_check=(0,), cache_modifier=".cg")
-            qk = tl.dot(q, tl.trans(k))
+
+            qk = tl.dot(q, tl.trans(k))  # [M,N]
+
             offs_n_rel = tl.arange(0, BLOCK_N)
             offs_n_abs = start_n + offs_n_rel
+
             n_valid = offs_n_abs < k_seq_len
             valid_cols = offs_n_abs[None, :] <= col_limit_abs[:, None]
             mask = valid_cols & m_valid[:, None] & n_valid[None, :]
+
             qk = tl.where(mask, qk, -1.0e6)
+
+            # stable running softmax
             m_i_new = tl.maximum(m_i, tl.max(qk, axis=1))
             alpha = tl.exp2(m_i - m_i_new)
             p = tl.exp2(qk - m_i_new[:, None])
             l_ij = tl.sum(p, axis=1)
+
             l_i = l_i * alpha + l_ij
             acc = acc * alpha[:, None]
             m_i = m_i_new
-            acc = tl.dot(p.to(v.type), v, acc)
-            start_n += BLOCK_N
+            acc = tl.dot(p.to(v.dtype), v, acc)
+
+        # normalize and write out this M-tile
         l_i_safe = tl.where(l_i == 0, 1.0, l_i)
         acc = acc / l_i_safe[:, None]
+
         O_block_ptr = tl.make_block_ptr(
             base=O_head_ptr,
             shape=(q_seq_end, BLOCK_DMODEL),
@@ -117,8 +144,7 @@ def _staircase_attn_fwd_kernel_varlen_v2(
             block_shape=(BLOCK_M, BLOCK_DMODEL),
             order=(1, 0),
         )
-        tl.store(O_block_ptr, acc.to(q.type), boundary_check=(0,))
-        start_m += BLOCK_M
+        tl.store(O_block_ptr, acc.to(q.dtype), boundary_check=(0,))
 
 class SparseAttentionVarlenFunctionV2(torch.autograd.Function):
     @staticmethod
@@ -148,7 +174,6 @@ class SparseAttentionVarlenFunctionV2(torch.autograd.Function):
             n_heads, n_kv_heads,
             q_scale=1.0 / math.sqrt(head_dim) * 1.44269504,
             BLOCK_DMODEL=BLOCK_DMODEL,
-            STAIRCASE_SIZE=staircase_size,
             LOG2_STAIRS=log2_stairs,
             NUM_HEADS_PER_KV_GROUP=num_heads_per_kv_group,
         )
