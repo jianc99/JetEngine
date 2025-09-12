@@ -6,6 +6,7 @@ from transformers import AutoTokenizer
 import torch.multiprocessing as mp
 # Added imports for profiling
 import torch
+from torch import nn
 from contextlib import nullcontext
 import torch.profiler as torch_profiler
 
@@ -14,6 +15,7 @@ from jetengine.sampling_params import SamplingParams
 from jetengine.engine.sequence import Sequence, RunType
 from jetengine.engine.scheduler import Scheduler
 from jetengine.engine.model_runner import ModelRunner
+from jetengine.utils.loader import load_from_hf_model
 
 
 class LLMEngine:
@@ -41,6 +43,44 @@ class LLMEngine:
         self.scheduler = Scheduler(config)
         self.scheduler.consistent_sampling_params = False
         atexit.register(self.exit)
+
+    def offload_parameters(self, include_buffers: bool = False):
+        """
+        Replace all parameter (and buffer) storages with meta tensors.
+        Keeps shapes/dtypes, frees GPU/CPU memory.
+        """
+
+        def offload_parameters_keep_buffers(model: torch.nn.Module):
+            """
+            Move *parameters* to meta to free memory while keeping buffers unchanged.
+            Works for any module tree.
+            """
+            # 1) Snapshot real buffers (module reference + buffer name + tensor)
+            saved_buffers = []
+            for mod in model.modules():
+                for bname, buf in list(mod._buffers.items()):
+                    if buf is not None:
+                        saved_buffers.append((mod, bname, buf))
+
+            # 2) Move everything to meta
+            model.to_empty(device=torch.device("meta"))
+
+            # 3) Restore the saved, real buffers
+            for mod, bname, buf in saved_buffers:
+                # Reattach the original tensor (device/dtype preserved)
+                mod._buffers[bname] = buf
+
+            torch.cuda.empty_cache()
+        if include_buffers:
+            self.model_runner.model.to_empty(device=torch.device("meta"))
+        else:
+            offload_parameters_keep_buffers(self.model_runner.model)
+
+        print("Successfully cleaned old parameters (buffers kept)." if not include_buffers
+              else "Successfully cleaned old parameters and buffers.")
+
+    def reload_parameters(self, hf_model: nn.Module):
+        load_from_hf_model(self.model_runner.model, hf_model=hf_model)
 
     def exit(self):
         self.model_runner.call("exit")
