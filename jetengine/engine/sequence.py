@@ -1,7 +1,6 @@
 from copy import copy
 from enum import Enum, auto
 from itertools import count
-
 from jetengine.sampling_params import SamplingParams
 
 
@@ -21,9 +20,8 @@ class Sequence:
     block_size = 256
     counter = count()
 
-    def __init__(self, prompt_token_ids: list[int], mask_token_id: int, sampling_params = SamplingParams()):
+    def __init__(self, prompt_token_ids: list[int], mask_token_id: int, sampling_params=SamplingParams()):
         self.seq_id = next(Sequence.counter)
-
         self.block_length = sampling_params.block_length
         self.prompt_token_ids = prompt_token_ids
         prompt_len = len(self.prompt_token_ids)
