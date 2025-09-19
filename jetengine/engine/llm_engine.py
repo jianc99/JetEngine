@@ -92,8 +92,9 @@ class LLMEngine:
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
         if isinstance(prompt, list):
-            start = prompt.index(self.tokenizer.pad_token_id) + 1
-            prompt = prompt[start:]
+            if self.tokenizer.pad_token_id in prompt:
+                start = prompt.index(self.tokenizer.pad_token_id) + 1
+                prompt = prompt[start:]
         seq = Sequence(prompt, self.config.mask_token_id, sampling_params)
         seq.eos_token_id = self.tokenizer.eos_token_id
         self.scheduler.add(seq)
