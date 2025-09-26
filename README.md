@@ -1,4 +1,9 @@
 # JetEngine
+## ⚠️ Development Notice
+
+This project is under **active development (Accelerate branch)**.  
+If you encounter any issues on the `main` branch, please [open an issue](../../issues) to remind me to fix them.  
+Your feedback is greatly appreciated!
 
 JetEngine, a lightweight inference engine for the [SDAR](https://jetastra.github.io/SDAR/) series (and other diffusion block decoding models) built on [nano-vllm](https://github.com/GeeeekExplorer/nano-vllm) support both dense and MoE models and Tensor Parallel distributed inference, delivers tons of acceleration compared to the naive implementation.
 
@@ -9,7 +14,9 @@ In our benchmark, we tested the 4B SDAR model with block size 4 (basic accelerat
 This demonstrates that JetEngine can unlock production-level throughput for SDAR models, making it ideal for both research-scale batch inference and real-world deployment scenarios.
 ## 🚀 New Features
 [09/15/2025] Support completely offload the model and kv cache to free memory for RL training
+
 [09/14/2025] Support Hybrid Data Parallel and Tensor Parallel Inference
+
 [09/07/2025] Support [Entropy Bounded sampler](https://arxiv.org/abs/2505.24857)
 ```python
 SamplingParams(temperature=1.0, topk=0, topp=1.0, max_tokens=4096, remasking_strategy="entropy_bounded", block_length=4, denoising_steps=4, eb_threshold=0.6)
