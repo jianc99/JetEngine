@@ -5,6 +5,20 @@ This project is under **active development (Accelerate branch)**.
 If you encounter any issues on the `main` branch, please [open an issue](../../issues) to remind me to fix them.  
 Your feedback is greatly appreciated!
 
+📢 Kind Notice
+
+JetEngine is a personal project I started during my work on [SDAR](https://jetastra.github.io/SDAR/), inspired by the excellent open-source project [nano-vllm](https://github.com/GeeeekExplorer/nano-vllm).
+
+I built JetEngine for fun and to demonstrate the potential speedups of SDAR vs. standard AR models.
+
+Recently, I’ve received feedback and interest from others about adapting this inference engine for RL training. I’m happy to hear that my work may be useful! Since I’m new to the open-source world, I may sometimes make mistakes—please bear with me 🙏. I truly welcome advice and suggestions from the community.
+
+Currently, most active development is happening in the Accelerate branch, which focuses on RL training for SDAR. As this is a personal project, I cannot thoroughly test every scenario or provide complete documentation, but I will update this README as new features are added.
+
+✨ If you are also working on SDAR RL training, or if you are experienced in inference engines / ML systems, your feedback and contributions would mean a lot to me. That’s the beauty of open source.
+
+As a side note, I’m also considering experimenting with fast-dllm to support models like Dream/Llada in the future, though this is not my first priority. If this interests you, please feel free to reach out!
+
 JetEngine, a lightweight inference engine for the [SDAR](https://jetastra.github.io/SDAR/) series (and other diffusion block decoding models) built on [nano-vllm](https://github.com/GeeeekExplorer/nano-vllm) support both dense and MoE models and Tensor Parallel distributed inference, delivers tons of acceleration compared to the naive implementation.
 
 In our benchmark, we tested the 4B SDAR model with block size 4 (basic acceleration setting) and batch size 128:
