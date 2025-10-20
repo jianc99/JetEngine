@@ -178,7 +178,8 @@ class ModelRunner:
             max_seqlen_k=max_seqlen_q, 
             slot_mapping=slot_mapping, 
             is_last_denoise_step=is_last_step, # <-- Pass the new flag
-            block_length=self.config.block_length
+            block_length=self.config.block_length,
+            causal=True,
         )
         return input_ids, positions
 
@@ -212,6 +213,38 @@ class ModelRunner:
         )
         
         return input_ids, positions
+    
+    def prepare_verify(self, seqs: list[Sequence]):
+        input_ids, positions = [], []
+        cached_lens = []
+        
+        for seq in seqs:
+            # The query is the current intermediate block
+            q_tokens = seq.intermediate_block_tokens
+            q_len = len(q_tokens)
+            
+            # The context (key/value) is the confirmed part of the sequence
+            k_len = len(seq)
+            
+            input_ids.extend(q_tokens)
+            # Positions are global
+            positions.extend(range(k_len, k_len + q_len))
+            cached_lens.append(k_len)
+
+        input_ids = torch.tensor(input_ids, dtype=torch.int64).cuda()
+        positions = torch.tensor(positions, dtype=torch.int64).cuda()
+        cached_lens = torch.tensor(cached_lens, dtype=torch.int32).cuda()
+        block_tables = self.prepare_block_tables(seqs)
+        
+        set_context(
+            run_type=RunType.VERIFY,
+            context_lens=cached_lens,
+            block_tables=block_tables,
+            block_length=self.config.block_length,
+            causal=True,
+        )
+        
+        return input_ids, positions
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor):
@@ -222,9 +255,10 @@ class ModelRunner:
             input_ids, positions = self.prepare_prefill(seqs)
         elif run_type == RunType.DENOISE:
             input_ids, positions = self.prepare_denoise(seqs)
+        elif run_type == RunType.VERIFY:
+            input_ids, positions = self.prepare_verify(seqs)
         else:
             return None
-
         logits = self.run_model(input_ids, positions)
         reset_context()
         return logits if self.rank == 0 else None

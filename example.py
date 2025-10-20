@@ -5,14 +5,14 @@ from transformers import AutoTokenizer
 
 def main():
     #/mnt/shared-storage-user/bianyihan/volc/models
-    path = os.path.expanduser("/mnt/shared-storage-user/bianyihan/volc/models/SDAR-4B-Chat") # Path to your local model
+    path = "/home/zhijian/jian/modified/dLLM-RL/sft_sdar_arbd_16/ckpt/optimized" # Path to your local model
     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-    llm = LLM(path, enforce_eager=False, tensor_parallel_size=1, mask_token_id=151669, block_length=4) # Must set mask_token_id & block_length
+    llm = LLM(path, enforce_eager=False, tensor_parallel_size=1, mask_token_id=151669, block_length=16) # Must set mask_token_id & block_length
     # sampling_params = SamplingParams(temperature=1.0, topk=0, topp=1.0, max_tokens=4096, remasking_strategy="low_confidence_dynamic", block_length=8, denoising_steps=8, dynamic_threshold=0.9)
-    sampling_params = SamplingParams(temperature=1.0, topk=0, topp=1.0, max_tokens=4096, remasking_strategy="entropy_bounded", block_length=4, denoising_steps=4, eb_threshold=0.6)
+    sampling_params = SamplingParams(temperature=1.0, topk=1, topp=1.0, max_tokens=1000, remasking_strategy="low_confidence_dynamic", block_length=16, denoising_steps=1, dynamic_threshold=0.9)
 
     prompts = [
-        "Define\n\\[p = \\sum_{k = 1}^\\infty \\frac{1}{k^2} \\quad \\text{and} \\quad q = \\sum_{k = 1}^\\infty \\frac{1}{k^3}.\\]Find a way to write\n\\[\\sum_{j = 1}^\\infty \\sum_{k = 1}^\\infty \\frac{1}{(j + k)^3}\\]in terms of $p$ and $q.$\nPlease reason step by step, and put your final answer within \\boxed{}.\n",
+        "The product of three consecutive integers is 120. That product divided by the mean of the three integers is 24. What is the largest of the three consecutive integers?\nPlease reason step by step, and put your final answer within \\boxed{}.",
         "Convert the point $(0,3)$ in rectangular coordinates to polar coordinates.  Enter your answer in the form $(r,\\theta),$ where $r > 0$ and $0 \\le \\theta < 2 \\pi.$\nPlease reason step by step, and put your final answer within \\boxed{}.\n",
         "The results of a cross-country team's training run are graphed below. Which student has the greatest average speed? [asy]\nfor ( int i = 1; i <= 7; ++i )\n{\n\ndraw((i,0)--(i,6));\n}\n\nfor ( int i = 1; i <= 5; ++i )\n{\n\ndraw((0,i)--(8,i));\n}\ndraw((-0.5,0)--(8,0), linewidth(1));\ndraw((0,-0.5)--(0,6), linewidth(1));\nlabel(\"$O$\", (0,0), SW);\nlabel(scale(.85)*rotate(90)*\"distance\", (0, 3), W);\nlabel(scale(.85)*\"time\", (4, 0), S);\ndot((1.25, 4.5));\nlabel(scale(.85)*\"Evelyn\", (1.25, 4.8), N);\ndot((2.5, 2.2));\nlabel(scale(.85)*\"Briana\", (2.5, 2.2), S);\ndot((4.25,5.2));\nlabel(scale(.85)*\"Carla\", (4.25, 5.2), SE);\ndot((5.6, 2.8));\nlabel(scale(.85)*\"Debra\", (5.6, 2.8), N);\ndot((6.8, 1.4));\nlabel(scale(.85)*\"Angela\", (6.8, 1.4), E);\n[/asy]\nPlease reason step by step, and put your final answer within \\boxed{}.\n",
         "A regular hexagon can be divided into six equilateral triangles. If the perimeter of one of the triangles is 21 inches, what is the perimeter, in inches, of the regular hexagon?\nPlease reason step by step, and put your final answer within \\boxed{}.\n",
@@ -37,12 +37,12 @@ def main():
         for prompt in prompts
     ]
     outputs = llm.generate_streaming([prompts[0]], sampling_params, max_active=64) # Example for single sample inference
-    outputs = llm.generate_streaming(prompts*20, sampling_params, max_active=128) # Example for batch inference
+    outputs = llm.generate_streaming(prompts, sampling_params, max_active=128) # Example for batch inference
 
     for prompt, output in zip(prompts, outputs):
         print("\n")
-        print(f"Prompt: {prompt!r}")
-        print(f"Completion: {output['text']!r}")
+        print(f"Prompt: {prompt}")
+        print(f"Completion: {output['text']}")
 
 
 if __name__ == "__main__":

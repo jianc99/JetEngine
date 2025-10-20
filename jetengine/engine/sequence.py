@@ -14,6 +14,7 @@ class SequenceStatus(Enum):
 class RunType(Enum):
     PREFILL = auto()
     DENOISE = auto()
+    VERIFY = auto()
 
 
 class Sequence:
@@ -26,16 +27,14 @@ class Sequence:
         self.prompt_token_ids = prompt_token_ids
         prompt_len = len(self.prompt_token_ids)
         
-        self.num_prefill_tokens = (prompt_len // self.block_length) * self.block_length
+        # self.num_prefill_tokens = (prompt_len // self.block_length) * self.block_length
+        self.num_prefill_tokens = prompt_len
         prefill_part = self.prompt_token_ids[:self.num_prefill_tokens]
-        
-        first_denoise_part = self.prompt_token_ids[self.num_prefill_tokens:]
-        
+                
         self.token_ids = prefill_part
         self.num_tokens = len(self.token_ids)
         self.num_prompt_tokens = prompt_len # Keep track of the original full prompt length
-        
-        self.intermediate_block_tokens = first_denoise_part + [mask_token_id] * (self.block_length - len(first_denoise_part))
+        self.intermediate_block_tokens = [mask_token_id] * self.block_length
         self.num_to_transfer = 0
         self.current_denoising_step = 0
         
@@ -109,6 +108,10 @@ class Sequence:
         if not self.block_table:
             return (self.num_tokens + self.block_length + block_size - 1) // block_size
 
+        total_kv_allocated = len(self.block_table) * block_size
+        if total_kv_allocated >= self.num_tokens + self.block_length:
+            return 0
+        
         last_block_capacity = block_size - (self.num_tokens % block_size)
         if last_block_capacity == block_size: # Current tokens perfectly fill blocks
             last_block_capacity = 0
